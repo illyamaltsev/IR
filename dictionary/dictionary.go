@@ -2,7 +2,12 @@ package dictionary
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/gob"
+	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +16,9 @@ import (
 )
 
 type Dictionary struct {
-	uniqueWords        []string
-	wordsCounter       int64
-	uniqueWordsCounter int64
+	UniqueWords        []string
+	WordsCounter       int64
+	UniqueWordsCounter int64
 	mutex              *sync.Mutex
 	wg                 *sync.WaitGroup
 }
@@ -21,9 +26,9 @@ type Dictionary struct {
 // Create an empty dictionary
 func NewEmptyDictionary() *Dictionary {
 	return &Dictionary{
-		uniqueWords:        make([]string, 0),
-		wordsCounter:       0,
-		uniqueWordsCounter: 0,
+		UniqueWords:        make([]string, 0),
+		WordsCounter:       0,
+		UniqueWordsCounter: 0,
 		mutex:              &sync.Mutex{},
 		wg:                 &sync.WaitGroup{},
 	}
@@ -39,7 +44,7 @@ func (d *Dictionary) BuildFromDir(dirname string) {
 			for line := range enumerateFile(filePath) {
 				for _, word := range tokenize(line) {
 					d.appendIfNotExist(word)
-					atomic.AddInt64(&d.wordsCounter, 1)
+					atomic.AddInt64(&d.WordsCounter, 1)
 				}
 			}
 			wg.Done()
@@ -52,12 +57,50 @@ func (d *Dictionary) BuildFromDir(dirname string) {
 
 // Add new unique word to the dictionary
 func (d *Dictionary) appendIfNotExist(word string) {
-	if !stringInArr(word, d.uniqueWords) {
+	if !stringInArr(word, d.UniqueWords) {
 		d.mutex.Lock()
 		defer d.mutex.Unlock()
-		d.uniqueWords = append(d.uniqueWords, word)
-		atomic.AddInt64(&d.uniqueWordsCounter, 1)
+		d.UniqueWords = append(d.UniqueWords, word)
+		atomic.AddInt64(&d.UniqueWordsCounter, 1)
 	}
+}
+
+func (d *Dictionary) SaveToFile(filepath string) {
+	data := d.toGOB64()
+	var file *os.File
+	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+		// create a file
+		file, err = os.Create(filepath)
+		handleError(err)
+	} else {
+		// open file using READ & WRITE permission
+		file, err = os.OpenFile(filepath, os.O_RDWR, 0644)
+		// clear file content
+		file.Truncate(0)
+		file.Seek(0, 0)
+		handleError(err)
+	}
+	defer file.Close()
+	// write some text line-by-line to file
+	_, err := file.WriteString(data)
+	handleError(err)
+
+	// save changes
+	err = file.Sync()
+	handleError(err)
+
+}
+
+// Serialize dictionary
+func (d *Dictionary) toGOB64() string {
+	b := bytes.Buffer{}
+	e := gob.NewEncoder(&b)
+	err := e.Encode(d)
+	if err != nil {
+		fmt.Println(`failed gob Encode`, err)
+	}
+	return base64.StdEncoding.EncodeToString(b.Bytes())
+
 }
 
 // Get all files from the dir
@@ -121,4 +164,10 @@ func stringInArr(a string, list []string) bool {
 		}
 	}
 	return false
+}
+
+func handleError(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
 }
