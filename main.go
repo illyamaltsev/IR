@@ -1,12 +1,14 @@
 package main
 
 import (
-	"InfoPoisk/dictionary"
+	"fmt"
+
+	"./dictionary"
 )
 
 func main() {
 	d := dictionary.NewEmptyDictionary()
-	d.FillFromTxt("kobzar.txt")
-	print(d)
+	d.BuildFromDir("data")
+	fmt.Println(d)
 	//d.save("dict.txt")
 }
