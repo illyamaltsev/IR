@@ -36,27 +36,23 @@ func NewEmptyDictionary() *Dictionary {
 
 // Build dictionary from files in given directory
 func (d *Dictionary) BuildFromDir(dirname string) {
-	files := enumerateFiles(dirname)
-
-	for file := range files {
+	for file := range enumerateFiles(dirname) {
 		d.wg.Add(1)
 		go func(filePath string, wg *sync.WaitGroup) {
 			for line := range enumerateFile(filePath) {
 				for _, word := range tokenize(line) {
-					d.appendIfNotExist(word)
+					d.appendIfNotExists(word)
 					atomic.AddInt64(&d.WordsCounter, 1)
 				}
 			}
 			wg.Done()
 		}(file, d.wg)
 	}
-
 	d.wg.Wait()
-
 }
 
 // Add new unique word to the dictionary
-func (d *Dictionary) appendIfNotExist(word string) {
+func (d *Dictionary) appendIfNotExists(word string) {
 	if !stringInArr(word, d.UniqueWords) {
 		d.mutex.Lock()
 		defer d.mutex.Unlock()
@@ -65,6 +61,7 @@ func (d *Dictionary) appendIfNotExist(word string) {
 	}
 }
 
+// Save serialized dictionary to the file
 func (d *Dictionary) SaveToFile(filepath string) {
 	data := d.toGOB64()
 	var file *os.File
@@ -75,10 +72,10 @@ func (d *Dictionary) SaveToFile(filepath string) {
 	} else {
 		// open file using READ & WRITE permission
 		file, err = os.OpenFile(filepath, os.O_RDWR, 0644)
+		handleError(err)
 		// clear file content
 		file.Truncate(0)
 		file.Seek(0, 0)
-		handleError(err)
 	}
 	defer file.Close()
 	// write some text line-by-line to file
