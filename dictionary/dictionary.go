@@ -13,12 +13,15 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
 
 type Dictionary struct {
 	UniqueWords        []string
 	WordsCounter       int64
 	UniqueWordsCounter int64
+	cuckoo             *cuckoo.Filter
 	mutex              *sync.Mutex
 	wg                 *sync.WaitGroup
 }
@@ -29,36 +32,68 @@ func NewEmptyDictionary() *Dictionary {
 		UniqueWords:        make([]string, 0),
 		WordsCounter:       0,
 		UniqueWordsCounter: 0,
+		cuckoo:             cuckoo.NewFilter(1000000),
 		mutex:              &sync.Mutex{},
 		wg:                 &sync.WaitGroup{},
 	}
 }
 
+func worker(lines chan string, wg *sync.WaitGroup, d *Dictionary) {
+	// Decreasing internal counter for wait-group as soon as goroutine finishes
+	defer wg.Done()
+
+	for line := range lines {
+		for _, word := range tokenize(line) {
+			d.appendIfNotExists(word)
+			atomic.AddInt64(&d.WordsCounter, 1)
+		}
+	}
+
+}
+
 // Build dictionary from files in given directory
 func (d *Dictionary) BuildFromDir(dirname string) {
+	lines := make(chan string)
+	wg := new(sync.WaitGroup)
+
+	// create a pool of workers
+	for i := 0; i < 250; i++ {
+		wg.Add(1)
+		go worker(lines, wg, d)
+	}
+
 	for file := range enumerateFiles(dirname) {
 		d.wg.Add(1)
 		go func(filePath string, wg *sync.WaitGroup) {
 			for line := range enumerateFile(filePath) {
-				for _, word := range tokenize(line) {
-					d.appendIfNotExists(word)
-					atomic.AddInt64(&d.WordsCounter, 1)
-				}
+				lines <- line
 			}
 			wg.Done()
 		}(file, d.wg)
 	}
 	d.wg.Wait()
+	// Closing channel (waiting in goroutines won't continue any more)
+	close(lines)
+
+	// Waiting for all goroutines to finish (otherwise they die as main routine dies)
+	wg.Wait()
 }
 
 // Add new unique word to the dictionary
 func (d *Dictionary) appendIfNotExists(word string) {
-	if !stringInArr(word, d.UniqueWords) {
+	if !d.cuckoo.Lookup([]byte(word)) {
 		d.mutex.Lock()
 		defer d.mutex.Unlock()
+		d.cuckoo.Insert([]byte(word))
 		d.UniqueWords = append(d.UniqueWords, word)
 		atomic.AddInt64(&d.UniqueWordsCounter, 1)
 	}
+	// if !stringInArr(word, d.UniqueWords) {
+	// 	d.mutex.Lock()
+	// 	defer d.mutex.Unlock()
+	// 	d.UniqueWords = append(d.UniqueWords, word)
+	// 	atomic.AddInt64(&d.UniqueWordsCounter, 1)
+	// }
 }
 
 // Save serialized dictionary to the file
